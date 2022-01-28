@@ -1,11 +1,12 @@
 module Sequenced
   class Generator
-    attr_reader :record, :scope, :column, :start_at, :skip
+    attr_reader :record, :scope, :column, :table, :start_at, :skip
 
     def initialize(record, options = {})
       @record = record
       @scope = options[:scope]
       @column = options[:column].to_sym
+      @table = record.class.table_name.to_sym
       @start_at = options[:start_at]
       @skip = options[:skip]
     end
@@ -40,7 +41,7 @@ module Sequenced
       build_scope(*scope) do
         rel = base_relation
         rel = rel.where.not(record.class.primary_key => record.id) if record.persisted?
-        rel.where(column => id)
+        rel.where("#{table}.#{column}" => id)
       end.count == 0
     end
 
@@ -64,14 +65,22 @@ module Sequenced
     def find_last_record
       build_scope(*scope) do
         base_relation.
-        where("#{column.to_s} IS NOT NULL").
-        order("#{column.to_s} DESC")
+          where("#{table}.#{column} IS NOT NULL").
+          order("#{table}.#{column} DESC")
       end.first
     end
 
     def build_scope(*columns)
       rel = yield
-      columns.each { |c| rel = rel.where(c => record.send(c.to_sym)) }
+      columns.each do |c|
+        if c.to_s.include? '.'
+          accessor, column = c.split('.')
+          table = record.class.reflections[accessor].table_name
+          rel = rel.joins(accessor.to_sym).includes(accessor.to_sym).where("#{table}.#{column}" => record.send(column))
+        else
+          rel = rel.where(c => record.send(c))
+        end
+      end
       rel
     end
 
